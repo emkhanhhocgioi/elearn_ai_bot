@@ -1302,10 +1302,21 @@ async def performance_question_generation(request: PerformanceQuestionRequest):
         
         # Tạo thông tin về các bài test gần đây
         test_info_text = ""
+        recent_topics = []  # Lưu các chủ đề từ test title
+        
         if request.recent_tests and len(request.recent_tests) > 0:
             test_info_text = "\n\nThông tin các bài kiểm tra gần đây:\n"
             for i, test in enumerate(request.recent_tests[:3], 1):  # Chỉ lấy 3 bài gần nhất
-                test_info_text += f"{i}. Bài: {test.get('title', 'N/A')} - Điểm: {test.get('score', 0)}/10\n"
+                title = test.get('title', 'N/A')
+                score = test.get('score', 0)
+                test_info_text += f"{i}. Bài: {title} - Điểm: {score}/10\n"
+                
+                # Trích xuất chủ đề từ title
+                if title and title != 'N/A':
+                    recent_topics.append({
+                        'title': title,
+                        'score': score
+                    })
         else:
             test_info_text = "\n\nHọc sinh chưa có kết quả kiểm tra gần đây."
         
@@ -1323,31 +1334,39 @@ async def performance_question_generation(request: PerformanceQuestionRequest):
         else:
             difficulty_guidance = "Tạo câu hỏi ở mức độ CƠ BẢN để giúp học sinh nắm vững kiến thức nền tảng."
         
+        # Tạo phần hướng dẫn về chủ đề
+        topic_guidance = ""
+        if recent_topics:
+            # Ưu tiên chủ đề có điểm thấp nhất (cần cải thiện)
+            lowest_score_topic = min(recent_topics, key=lambda x: x['score'])
+            topic_guidance = f"\n\n🎯 CHỦ ĐỀ ƯU TIÊN:\nDựa trên bài kiểm tra '{lowest_score_topic['title']}' (Điểm: {lowest_score_topic['score']}/10), hãy tạo câu hỏi TRỰC TIẾP liên quan đến nội dung này.\n\nYÊU CẦU VỀ CHỦ ĐỀ:\n- Phân tích kỹ tên bài để hiểu rõ kiến thức cần luyện tập (ví dụ: 'Cách đếm số tự nhiên' → tạo câu về đếm, quy luật số)\n- Câu hỏi phải KHỚP với chủ đề trong title, không lệch sang kiến thức khác\n- Nếu title có 'Chương X, Bài Y' thì tập trung vào nội dung cụ thể của bài đó"
+        
         prompt = f"""Dựa trên thông tin hiệu suất học tập của học sinh môn {config['name']}, hãy tạo MỘT câu hỏi luyện tập phù hợp.
 
 {test_info_text}
 
 Điểm trung bình: {avg_score:.1f}/10
 
-Hướng dẫn: {difficulty_guidance}
+Hướng dẫn độ khó: {difficulty_guidance}{topic_guidance}
 
-YÊU CẦU:
+YÊU CẦU CHUNG:
 1. Phân tích điểm yếu/mạnh của học sinh dựa trên điểm số
 2. Đề xuất gợi ý cải thiện cụ thể
-3. Tạo câu hỏi phù hợp với trình độ hiện tại
+3. Tạo câu hỏi PHÙ HỢP CHÍNH XÁC với nội dung bài kiểm tra gần đây
+4. Câu hỏi phải giúp học sinh cải thiện kỹ năng yếu đã được phát hiện
 
 Trả về 3 JSON với format SAU (KHÔNG thêm text khác, KHÔNG dùng markdown):
 {{
-  "question": "Nội dung câu hỏi luyện tập chi tiết và rõ ràng",
-  "answer": "Câu trả lời mẫu đầy đủ, có hướng dẫn từng bước",
+  "question": "Nội dung câu hỏi luyện tập chi tiết, rõ ràng và TRỰC TIẾP liên quan đến chủ đề trong test title",
+  "answer": "Câu trả lời mẫu đầy đủ, có hướng dẫn từng bước giải chi tiết",
   "ai_score": 0,
-  "improvement_suggestions": "Gợi ý cải thiện dựa trên điểm yếu được phát hiện từ các bài test gần đây, bao gồm: 1) Điểm cần cải thiện, 2) Phương pháp học tập đề xuất, 3) Kỹ năng cần rèn luyện"
+  "improvement_suggestions": "Gợi ý cải thiện CỤ THỂ dựa trên: 1) Phân tích điểm yếu từ bài test (kèm tên bài), 2) Phương pháp học tập phù hợp với chủ đề đó, 3) Kỹ năng cần rèn luyện liên quan trực tiếp đến nội dung bài test"
 }}
 
 Lưu ý: 
 - ai_score luôn là 0 (sẽ được cập nhật sau khi học sinh làm bài)
-- improvement_suggestions phải CỤ THỂ và DỰA TRÊN hiệu suất thực tế
-- Câu hỏi phải PHÙ HỢP với chương trình THCS"""
+- improvement_suggestions phải ĐỀ CẬP CỤ THỂ đến nội dung bài kiểm tra (ví dụ: "Em cần ôn lại phần 'Cách đếm số tự nhiên'...")
+- Câu hỏi phải ĐÚNG chủ đề với test title, không tạo câu chung chung"""
         
         response = client.chat.completions.create(
             model=MODEL_NAME,
